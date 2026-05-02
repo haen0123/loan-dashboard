@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>부채 상환 대시보드</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0A0A12; color: #E8E6F0; font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; }
+  input[type=range] { -webkit-appearance: none; width: 100%; height: 4px; background: #2A2A3A; border-radius: 99px; outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; background: #7C6AF7; border-radius: 50%; cursor: pointer; box-shadow: 0 0 6px #7C6AF788; }
+  select, input { outline: none; }
+  button { font-family: inherit; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: #141428; }
+  ::-webkit-scrollbar-thumb { background: #3A3A52; border-radius: 99px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo, useEffect } = React;
+
+// ── 상수 ──
+const CHEON_MONTHLY_INTEREST = 23602;
+const CHEON_ORIGIN = 7000000;
+const CURRENT_CARD_BAL = 14016759;
+
+const PAST_RECORDS = [
+  { id:"past-1", label:"2026년 2월",
+    events:[
+      { desc:"카드론 0회차 (대량 중도상환)", principalCard:17000000, interestCard:207958, note:"원금잔액 30,000,000원" },
+      { desc:"적금 담보 대출 상환", principalOther:10000000, interestOther:0, note:"도약 적금 질권 해지" },
+    ], cardBalAfter:30000000, cheonBalAfter:CHEON_ORIGIN, cheonInterest:0 },
+  { id:"past-2", label:"2026년 3월",
+    events:[
+      { desc:"카드론 1회차 정기 상환", principalCard:15788362, interestCard:338196, note:"원금잔액 14,211,638원" },
+      { desc:"카드론 추가 원금 상환 1차", principalCard:9000000, interestCard:0, note:"여유자금 400만" },
+      { desc:"카드론 추가 원금 상환 2차", principalCard:2000000, interestCard:0, note:"여유자금 200만" },
+    ], cardBalAfter:14211638, cheonBalAfter:CHEON_ORIGIN, cheonInterest:CHEON_MONTHLY_INTEREST },
+  { id:"past-3", label:"2026년 3~4월 경계",
+    events:[
+      { desc:"카드론 추가 원금 상환 (하나 250만)", principalCard:2500000, interestCard:0, note:"원금잔액 16,207,864원" },
+    ], cardBalAfter:16207864, cheonBalAfter:CHEON_ORIGIN, cheonInterest:0 },
+  { id:"past-4", label:"2026년 4월",
+    events:[
+      { desc:"카드론 2회차 정기 원리금", principalCard:194879, interestCard:29786, note:"합계 224,665원" },
+      { desc:"카드론 추가 원금 상환", principalCard:2000000, interestCard:0, note:"여유자금 0" },
+    ], cardBalAfter:14016759, cheonBalAfter:CHEON_ORIGIN, cheonInterest:CHEON_MONTHLY_INTEREST },
+];
+
+const INITIAL_PLAN = [
+  { id:"p-now-1",    label:"5월",       event:"월 상환 시작 (현재)",                         type:"now",    addedAt:"2026-04" },
+  { id:"p-check-1",  label:"7월",       event:"신용등급 확인 (5 → 4등급 목표)",               type:"check",  addedAt:"2026-04" },
+  { id:"p-action-1", label:"8월",       event:"우리은행 직장인 대출 상담 (6.5% 이하 시 대환)", type:"action", addedAt:"2026-04" },
+  { id:"p-action-2", label:"11~12월",   event:"연금저축 300만원 납입 (세액공제)",              type:"action", addedAt:"2026-04" },
+  { id:"p-goal-1",   label:"12월",      event:"카드론 완전 상환 목표 (월 178만↑ 유지 시)",     type:"goal",   addedAt:"2026-04" },
+  { id:"p-goal-2",   label:"2027 상반기", event:"청약예금 대출 700만원 상환",                  type:"goal",   addedAt:"2026-04" },
+  { id:"p-future-1", label:"2027 하반기", event:"전세대출 준비",                              type:"future", addedAt:"2026-04" },
+];
+
+const TARGET_MONTH_OPTIONS = Array.from({ length:28 }, (_,i) => {
+  const d = new Date(2026, 4+i, 1);
+  const y = d.getFullYear(), m = d.getMonth()+1;
+  const val = `${y}-${String(m).padStart(2,"0")}`;
+  const months = i+1;
+  return { value:val, label:`${y}년 ${m}월 (${months}개월)` };
+});
+
+const MONTH_OPTIONS = Array.from({ length:30 }, (_,i) => {
+  const d = new Date(2026, 4+i, 1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+});
+
+const colorMap = { now:"#7C6AF7", check:"#F9C74F", action:"#4ECDC4", goal:"#FF6B6B", future:"#555370" };
+const badgeMap = { now:"현재", check:"확인", action:"액션", goal:"목표", future:"미래" };
+const EMPTY_FORM = { month:"2026-05", cardPrincipal:"", cardInterest:"", cheonPrincipal:"", cheonInterest:"", note:"" };
+
+function fmt(n) { return `${Math.round(n).toLocaleString()}원`; }
+function fmtM(m) { if(!m) return ""; const [y,mo]=m.split("-"); return `${y}년 ${parseInt(mo)}월`; }
+function monthDiff(from,to) { const [fy,fm]=from.split("-").map(Number), [ty,tm]=to.split("-").map(Number); return (ty-fy)*12+(tm-fm); }
+function monthsToComplete(bal,monthly) {
+  if(monthly<=0) return null;
+  const months = Math.ceil(bal/monthly);
+  const d = new Date(2026, 4+months, 1);
+  return `${d.getFullYear()}년 ${d.getMonth()+1}월`;
+}
+
+// localStorage 유틸
+function load(key, def) { try { const v=localStorage.getItem(key); return v?JSON.parse(v):def; } catch(e){ return def; } }
+function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch(e){} }
+
+function App() {
+  const [payments,    setPayments]    = useState(()=>load("ld_payments",[]));
+  const [planItems,   setPlanItems]   = useState(()=>load("ld_plan", INITIAL_PLAN));
+  const [planOverrides,setPlanOverrides]=useState(()=>load("ld_overrides",{}));
+  const [targetMonth, setTargetMonth] = useState(()=>load("ld_target","2026-12"));
+  const [sliderVal,   setSliderVal]   = useState(1780000);
+
+  const [form,      setForm]      = useState({...EMPTY_FORM});
+  const [editingId, setEditingId] = useState(null);
+  const [editForm,  setEditForm]  = useState(null);
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [showForm,  setShowForm]  = useState(false);
+  const [expanded,  setExpanded]  = useState(null);
+  const [showPlanForm,setShowPlanForm]=useState(false);
+  const [newPlan,   setNewPlan]   = useState({label:"",event:"",type:"goal"});
+
+  // localStorage 동기화
+  useEffect(()=>save("ld_payments", payments),   [payments]);
+  useEffect(()=>save("ld_plan",     planItems),   [planItems]);
+  useEffect(()=>save("ld_overrides",planOverrides),[planOverrides]);
+  useEffect(()=>save("ld_target",   targetMonth), [targetMonth]);
+
+  const sim = useMemo(()=>{
+    let cardBal=CURRENT_CARD_BAL, cheonBal=CHEON_ORIGIN;
+    const rows=[];
+    const sorted=[...payments].sort((a,b)=>a.month.localeCompare(b.month));
+    for(const p of sorted){
+      const cardP=Number(p.cardPrincipal)||0, cardI=Number(p.cardInterest)||0;
+      const cheonP=Number(p.cheonPrincipal)||0, cheonI=Number(p.cheonInterest)||CHEON_MONTHLY_INTEREST;
+      cardBal=Math.max(0,cardBal-cardP); cheonBal=Math.max(0,cheonBal-cheonP);
+      rows.push({id:p.id,month:p.month,cardP,cardI,cheonP,cheonI,cardBal,cheonBal,note:p.note});
+    }
+    return {rows,cardBal,cheonBal};
+  },[payments]);
+
+  const currentMonth="2026-05";
+  const monthsLeft=Math.max(1,monthDiff(currentMonth,targetMonth));
+  const monthlyNeeded=Math.ceil(sim.cardBal/monthsLeft);
+  const sliderComplete=monthsToComplete(sim.cardBal,sliderVal);
+
+  const pastIntCard  = PAST_RECORDS.reduce((a,r)=>a+r.events.reduce((b,e)=>b+(e.interestCard||0),0),0);
+  const pastIntCheon = PAST_RECORDS.reduce((a,r)=>a+(r.cheonInterest||0),0);
+  const futIntCard   = sim.rows.reduce((a,r)=>a+r.cardI,0);
+  const futIntCheon  = sim.rows.reduce((a,r)=>a+r.cheonI,0);
+  const totalInterest= pastIntCard+pastIntCheon+futIntCard+futIntCheon;
+
+  const totalOrigin  = 47000000+CHEON_ORIGIN+10000000;
+  const totalRemain  = sim.cardBal+sim.cheonBal;
+  const overallPct   = ((totalOrigin-totalRemain)/totalOrigin)*100;
+  const cardRepaidPct  = ((47000000-sim.cardBal)/47000000)*100;
+  const cheonRepaidPct = ((CHEON_ORIGIN-sim.cheonBal)/CHEON_ORIGIN)*100;
+  const totalRepaidPct = ((totalOrigin-totalRemain)/totalOrigin)*100;
+
+  function addPayment(){
+    const id=`pay-${Date.now()}`;
+    setPayments(prev=>{
+      const ex=prev.find(p=>p.month===form.month);
+      if(ex) return prev.map(p=>p.month===form.month?{...form,id:p.id}:p);
+      return [...prev,{...form,id}];
+    });
+    setForm({...EMPTY_FORM}); setShowForm(false);
+  }
+  function startEdit(pay){ setEditingId(pay.id); setEditForm({...pay}); }
+  function saveEdit(){ setPayments(prev=>prev.map(p=>p.id===editingId?{...editForm}:p)); setEditingId(null); setEditForm(null); }
+  function cancelEdit(){ setEditingId(null); setEditForm(null); }
+  function removePayment(id){ setPayments(prev=>prev.filter(p=>p.id!==id)); }
+
+  function markComplete(id){ setPlanOverrides(prev=>({...prev,[id]:{...prev[id],completedAt:currentMonth}})); }
+  function markSupersede(id){ setPlanOverrides(prev=>({...prev,[id]:{...prev[id],supersededAt:currentMonth}})); }
+  function undoPlan(id){ setPlanOverrides(prev=>{ const n={...prev}; delete n[id]; return n; }); }
+  function addPlanItem(){
+    if(!newPlan.event||!newPlan.label) return;
+    setPlanItems(prev=>[...prev,{...newPlan,id:`p-${Date.now()}`,addedAt:currentMonth}]);
+    setNewPlan({label:"",event:"",type:"goal"}); setShowPlanForm(false);
+  }
+
+  const iStyle=(bc)=>({ width:"100%", background:"#080810", border:`1px solid ${bc}`, color:"#E8E6F0", padding:"8px 11px", borderRadius:8, fontSize:13 });
+  const mStyle=(bc)=>({ width:"100%", background:"#080810", border:`1px solid ${bc}`, color:"#E8E6F0", padding:"6px 9px", borderRadius:7, fontSize:12 });
+
+  const interestTimeline=useMemo(()=>{
+    const g={};
+    PAST_RECORDS.forEach(rec=>{ const ci=rec.events.reduce((a,e)=>a+(e.interestCard||0),0); if(!g[rec.label])g[rec.label]={card:0,cheon:0,locked:true}; g[rec.label].card+=ci; g[rec.label].cheon+=rec.cheonInterest||0; });
+    sim.rows.forEach(row=>{ const label=fmtM(row.month); if(!g[label])g[label]={card:0,cheon:0,locked:false}; g[label].card+=row.cardI; g[label].cheon+=row.cheonI; });
+    return Object.entries(g);
+  },[sim.rows]);
+
+  const tabStyle=(key)=>({ background:activeTab===key?"#ffffff0E":"transparent", border:"none", color:activeTab===key?"#E8E6F0":"#6B6882", padding:"8px 14px", borderRadius:"8px 8px 0 0", cursor:"pointer", fontSize:12, fontWeight:activeTab===key?700:400, borderBottom:activeTab===key?"2px solid #7C6AF7":"2px solid transparent" });
+
+  return (
+    <div style={{minHeight:"100vh",background:"#0A0A12"}}>
+      {/* HEADER */}
+      <div style={{background:"linear-gradient(135deg,#141428,#1A1A3A 60%,#0D2050)",padding:"24px 20px 18px",borderBottom:"1px solid #ffffff0D"}}>
+        <div style={{maxWidth:960,margin:"0 auto"}}>
+          <div style={{fontSize:10,letterSpacing:4,color:"#7C6AF7",marginBottom:4,textTransform:"uppercase"}}>Financial Recovery Tracker</div>
+          <h1 style={{fontSize:23,fontWeight:800,background:"linear-gradient(90deg,#E8E6F0,#9B98BE)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>부채 상환 대시보드</h1>
+          <div style={{display:"flex",gap:16,marginTop:7,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:"#6B6882"}}>2026년 1월 대출 · 5년 8.5%</span>
+            <span style={{fontSize:12,color:"#7C6AF7",fontWeight:700}}>잔여 {fmt(totalRemain)}</span>
+            <span style={{fontSize:12,color:"#4ECDC4",fontWeight:700}}>{overallPct.toFixed(1)}% 완료</span>
+          </div>
+        </div>
+      </div>
+
+      {/* TABS */}
+      <div style={{maxWidth:960,margin:"0 auto",padding:"0 20px"}}>
+        <div style={{display:"flex",gap:2,padding:"12px 0 0",borderBottom:"1px solid #ffffff0D"}}>
+          {[["dashboard","📊 현황"],["history","📋 상환 기록"],["interest","💸 이자 내역"],["timeline","🗓️ 플랜"]].map(([key,label])=>(
+            <button key={key} onClick={()=>setActiveTab(key)} style={tabStyle(key)}>{label}</button>
+          ))}
+        </div>
+
+        <div style={{padding:"20px 0 60px"}}>
+
+          {/* ══ DASHBOARD ══ */}
+          {activeTab==="dashboard" && <div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:18}}>
+              {[
+                {label:"카드론 잔액",    value:fmt(sim.cardBal),   sub:"금리 8.5% / 60개월",           color:"#FF6B6B"},
+                {label:"청약예금 대출",  value:fmt(sim.cheonBal),  sub:`월 이자 ${fmt(CHEON_MONTHLY_INTEREST)} 고정`, color:"#4ECDC4"},
+                {label:"총 잔여 부채",   value:fmt(totalRemain),   sub:`${overallPct.toFixed(1)}% 완료`, color:"#7C6AF7"},
+                {label:"누적 납부 이자", value:fmt(totalInterest), sub:"카드론+청약 합계",              color:"#F9C74F"},
+              ].map(c=>(
+                <div key={c.label} style={{background:"#141428",borderRadius:13,padding:"15px",border:`1px solid ${c.color}1E`,position:"relative",overflow:"hidden"}}>
+                  <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:c.color}}/>
+                  <div style={{fontSize:10,color:"#6B6882",marginBottom:5}}>{c.label}</div>
+                  <div style={{fontSize:17,fontWeight:800,color:c.color}}>{c.value}</div>
+                  <div style={{fontSize:10,color:"#6B6882",marginTop:5}}>{c.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{background:"#141428",borderRadius:13,padding:"18px 20px",marginBottom:14,border:"1px solid #ffffff08"}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#9B98BE",marginBottom:14}}>상환 진행률</div>
+              {[
+                {label:"카드론 (4,700만 기준)",   initial:47000000,    remain:sim.cardBal,  pct:cardRepaidPct,  color:"#FF6B6B"},
+                {label:"청약예금 대출 (700만)",   initial:CHEON_ORIGIN, remain:sim.cheonBal, pct:cheonRepaidPct, color:"#4ECDC4"},
+                {label:"총 부채 (적금대출 포함)", initial:totalOrigin,  remain:totalRemain,  pct:totalRepaidPct, color:"#7C6AF7"},
+              ].map(bar=>(
+                <div key={bar.label} style={{marginBottom:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <span style={{fontSize:12,color:"#C8C5DC"}}>{bar.label}</span>
+                    <span style={{fontSize:11,color:"#6B6882"}}>{fmt(bar.remain)} · <span style={{color:bar.color,fontWeight:700}}>{bar.pct.toFixed(1)}%</span></span>
+                  </div>
+                  <div style={{height:7,background:"#ffffff0B",borderRadius:99,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${Math.min(bar.pct,100)}%`,background:`linear-gradient(90deg,${bar.color}55,${bar.color})`,borderRadius:99}}/>
+                  </div>
+                </div>
+              ))}
+
+              <div style={{marginTop:14,padding:"12px 14px",background:"#0A0A12",borderRadius:10,borderLeft:"3px solid #FF6B6B"}}>
+                <div style={{fontSize:11,color:"#FF6B6B",fontWeight:700,marginBottom:5}}>📅 카드사 다음 정기 회차</div>
+                <div style={{fontSize:12,color:"#A29FBD",lineHeight:1.8}}>
+                  <strong style={{color:"#E8E6F0"}}>3회차</strong> · 2026.5.12 · 원금 {fmt(196259)} + 이자 {fmt(105813)} = <strong style={{color:"#FF6B6B"}}>{fmt(302072)}</strong>
+                </div>
+              </div>
+
+              <div style={{marginTop:12,padding:"16px",background:"#0A0A12",borderRadius:10,borderLeft:"3px solid #7C6AF7"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <div style={{fontSize:11,color:"#7C6AF7",fontWeight:700}}>💡 목표 인사이트</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:10,color:"#6B6882"}}>목표 완납월</span>
+                    <select value={targetMonth} onChange={e=>setTargetMonth(e.target.value)}
+                      style={{background:"#141428",border:"1px solid #7C6AF740",color:"#E8E6F0",padding:"4px 8px",borderRadius:6,fontSize:11,cursor:"pointer"}}>
+                      {TARGET_MONTH_OPTIONS.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+                  <div style={{background:"#141428",borderRadius:9,padding:"10px 12px"}}>
+                    <div style={{fontSize:10,color:"#6B6882",marginBottom:4}}>목표 완납월</div>
+                    <div style={{fontSize:15,fontWeight:800,color:"#7C6AF7"}}>{fmtM(targetMonth)}</div>
+                    <div style={{fontSize:10,color:"#555370",marginTop:2}}>{monthsLeft}개월 남음</div>
+                  </div>
+                  <div style={{background:"#141428",borderRadius:9,padding:"10px 12px"}}>
+                    <div style={{fontSize:10,color:"#6B6882",marginBottom:4}}>월 필요 상환액</div>
+                    <div style={{fontSize:15,fontWeight:800,color:"#FF6B6B"}}>{fmt(monthlyNeeded)}</div>
+                    <div style={{fontSize:10,color:"#555370",marginTop:2}}>잔액 {fmt(sim.cardBal)} 기준</div>
+                  </div>
+                </div>
+                <div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <span style={{fontSize:11,color:"#A29FBD",fontWeight:600}}>상환액 시뮬레이터</span>
+                    <span style={{fontSize:13,fontWeight:800,color:"#FF6B6B"}}>{fmt(sliderVal)}</span>
+                  </div>
+                  <input type="range" min={0} max={2500000} step={10000} value={sliderVal} onChange={e=>setSliderVal(Number(e.target.value))}/>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#555370",marginTop:4}}>
+                    <span>0원</span><span>125만</span><span>250만원</span>
+                  </div>
+                  <div style={{marginTop:12,padding:"10px 14px",background:"#141428",borderRadius:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{fontSize:12,color:"#A29FBD"}}>월 <strong style={{color:"#FF6B6B"}}>{fmt(sliderVal)}</strong> 상환 시</span>
+                    <span style={{fontSize:13,fontWeight:800,color:sliderVal===0?"#555370":"#4ECDC4"}}>{sliderVal===0?"상환 불가":`${sliderComplete} 완납`}</span>
+                  </div>
+                </div>
+                <div style={{marginTop:10,fontSize:11,color:"#6B6882",lineHeight:1.7}}>
+                  청약 이자 <strong style={{color:"#4ECDC4"}}>월 {fmt(CHEON_MONTHLY_INTEREST)}</strong> 고정 · 카드론 완전 상환 후 청약 700 정리 예정
+                </div>
+              </div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <button onClick={()=>{setActiveTab("history");setShowForm(true);}} style={{background:"linear-gradient(135deg,#7C6AF7,#5B4CF5)",border:"none",color:"#fff",padding:"12px 28px",borderRadius:12,cursor:"pointer",fontSize:13,fontWeight:700,boxShadow:"0 4px 18px #7C6AF740"}}>+ 이번 달 상환 내역 추가</button>
+            </div>
+          </div>}
+
+          {/* ══ HISTORY ══ */}
+          {activeTab==="history" && <div>
+            <div style={{marginBottom:24}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                <span style={{fontSize:13,fontWeight:700,color:"#9B98BE"}}>🔒 확정 상환 내역 (2~4월)</span>
+                <span style={{fontSize:10,color:"#4ECDC4",background:"#4ECDC418",padding:"3px 9px",borderRadius:99,fontWeight:700}}>완료</span>
+              </div>
+              {PAST_RECORDS.map(rec=>{
+                const isOpen=expanded===rec.id;
+                const tcp=rec.events.reduce((a,e)=>a+(e.principalCard||0),0);
+                const tci=rec.events.reduce((a,e)=>a+(e.interestCard||0),0);
+                const top=rec.events.reduce((a,e)=>a+(e.principalOther||0),0);
+                return (
+                  <div key={rec.id} style={{background:"#141428",borderRadius:12,marginBottom:8,border:"1px solid #ffffff09",overflow:"hidden"}}>
+                    <div onClick={()=>setExpanded(isOpen?null:rec.id)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",cursor:"pointer",userSelect:"none"}}>
+                      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                        <span style={{fontSize:13,fontWeight:700,color:"#C8C5DC"}}>{rec.label}</span>
+                        {tcp>0&&<span style={{fontSize:11,color:"#FF6B6B"}}>원금 {fmt(tcp)}</span>}
+                        {tci>0&&<span style={{fontSize:11,color:"#F9C74F"}}>이자 {fmt(tci)}</span>}
+                        {top>0&&<span style={{fontSize:11,color:"#4ECDC4"}}>+적금대출 {fmt(top)}</span>}
+                      </div>
+                      <span style={{color:"#6B6882",fontSize:12}}>{isOpen?"▲":"▼"}</span>
+                    </div>
+                    {isOpen&&<div style={{borderTop:"1px solid #ffffff08",padding:"14px 16px",background:"#0A0A1A"}}>
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8,marginBottom:12}}>
+                        {[{label:"카드론 잔액(후)",value:fmt(rec.cardBalAfter),color:"#FF6B6B"},{label:"청약 잔액",value:fmt(rec.cheonBalAfter),color:"#4ECDC4"},{label:"카드론 이자",value:fmt(tci),color:"#F9C74F"},{label:"청약 이자",value:fmt(rec.cheonInterest||0),color:"#F9C74F88"}].map(item=>(
+                          <div key={item.label} style={{background:"#141428",borderRadius:8,padding:"8px 11px"}}>
+                            <div style={{fontSize:9,color:"#6B6882",marginBottom:3}}>{item.label}</div>
+                            <div style={{fontSize:13,fontWeight:700,color:item.color}}>{item.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {rec.events.map((ev,i)=>(
+                        <div key={i} style={{padding:"7px 0",borderBottom:i<rec.events.length-1?"1px solid #ffffff07":"none"}}>
+                          <div style={{display:"flex",justifyContent:"space-between"}}>
+                            <span style={{fontSize:12,color:"#A29FBD"}}>{ev.desc}</span>
+                            <div style={{textAlign:"right"}}>
+                              {ev.principalCard>0&&<div style={{fontSize:11,color:"#FF6B6B"}}>원금 {fmt(ev.principalCard)}</div>}
+                              {ev.interestCard>0&&<div style={{fontSize:11,color:"#F9C74F"}}>이자 {fmt(ev.interestCard)}</div>}
+                              {ev.principalOther>0&&<div style={{fontSize:11,color:"#4ECDC4"}}>원금 {fmt(ev.principalOther)}</div>}
+                            </div>
+                          </div>
+                          <div style={{fontSize:10,color:"#555370",marginTop:2}}>{ev.note}</div>
+                        </div>
+                      ))}
+                    </div>}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <span style={{fontSize:13,fontWeight:700,color:"#9B98BE"}}>✏️ 진행 중 (5월~)</span>
+                <button onClick={()=>setShowForm(!showForm)} style={{background:"#7C6AF720",border:"1px solid #7C6AF740",color:"#7C6AF7",padding:"6px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>+ 추가</button>
+              </div>
+              {showForm&&<div style={{background:"#141428",borderRadius:12,padding:17,border:"1px solid #7C6AF730",marginBottom:12}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#9B98BE",marginBottom:12}}>📝 상환 내역 입력</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  <div style={{gridColumn:"1/-1"}}>
+                    <label style={{fontSize:10,color:"#6B6882",display:"block",marginBottom:4}}>월</label>
+                    <select value={form.month} onChange={e=>setForm({...form,month:e.target.value})} style={iStyle("#ffffff13")}>
+                      {MONTH_OPTIONS.map(m=><option key={m} value={m}>{fmtM(m)}</option>)}
+                    </select>
+                  </div>
+                  <div style={{gridColumn:"1/-1",fontSize:11,color:"#FF6B6B",fontWeight:700}}>카드론</div>
+                  <div><label style={{fontSize:10,color:"#FF6B6B88",display:"block",marginBottom:4}}>원금 (원)</label><input type="number" value={form.cardPrincipal} onChange={e=>setForm({...form,cardPrincipal:e.target.value})} placeholder="196259" style={iStyle("#FF6B6B30")}/></div>
+                  <div><label style={{fontSize:10,color:"#F9C74F88",display:"block",marginBottom:4}}>이자 (원)</label><input type="number" value={form.cardInterest} onChange={e=>setForm({...form,cardInterest:e.target.value})} placeholder="105813" style={iStyle("#F9C74F30")}/></div>
+                  <div style={{gridColumn:"1/-1",fontSize:11,color:"#4ECDC4",fontWeight:700}}>청약예금 대출</div>
+                  <div><label style={{fontSize:10,color:"#4ECDC488",display:"block",marginBottom:4}}>원금 (원)</label><input type="number" value={form.cheonPrincipal} onChange={e=>setForm({...form,cheonPrincipal:e.target.value})} placeholder="0" style={iStyle("#4ECDC430")}/></div>
+                  <div><label style={{fontSize:10,color:"#F9C74F88",display:"block",marginBottom:4}}>이자 (기본 23,602)</label><input type="number" value={form.cheonInterest} onChange={e=>setForm({...form,cheonInterest:e.target.value})} placeholder="23602" style={iStyle("#F9C74F30")}/></div>
+                  <div style={{gridColumn:"1/-1"}}><label style={{fontSize:10,color:"#6B6882",display:"block",marginBottom:4}}>메모</label><input value={form.note} onChange={e=>setForm({...form,note:e.target.value})} placeholder="예: 초과수당 활용" style={iStyle("#ffffff13")}/></div>
+                </div>
+                <div style={{display:"flex",gap:9,marginTop:13}}>
+                  <button onClick={addPayment} style={{background:"linear-gradient(135deg,#7C6AF7,#5B4CF5)",border:"none",color:"#fff",padding:"9px 18px",borderRadius:9,cursor:"pointer",fontSize:12,fontWeight:700}}>저장</button>
+                  <button onClick={()=>setShowForm(false)} style={{background:"#ffffff0C",border:"1px solid #ffffff12",color:"#6B6882",padding:"9px 18px",borderRadius:9,cursor:"pointer",fontSize:12}}>취소</button>
+                </div>
+              </div>}
+
+              {payments.length===0
+                ? <div style={{textAlign:"center",padding:"38px 20px",color:"#6B6882",background:"#141428",borderRadius:12,border:"1px solid #ffffff08"}}>
+                    <div style={{fontSize:28,marginBottom:7}}>📋</div>
+                    <div style={{fontSize:13}}>5월 이후 상환 내역을 추가해보세요</div>
+                    <div style={{fontSize:11,color:"#4B4866",marginTop:4}}>카드론 {fmt(CURRENT_CARD_BAL)} / 청약 {fmt(CHEON_ORIGIN)}</div>
+                  </div>
+                : <div>
+                    {[...payments].sort((a,b)=>a.month.localeCompare(b.month)).map(pay=>{
+                      const simRow=sim.rows.find(r=>r.id===pay.id);
+                      const isEditing=editingId===pay.id;
+                      return (
+                        <div key={pay.id} style={{background:"#141428",borderRadius:12,marginBottom:9,border:"1px solid #ffffff09",overflow:"hidden"}}>
+                          {!isEditing
+                            ? <div style={{padding:"13px 16px"}}>
+                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                                  <div>
+                                    <div style={{fontSize:13,fontWeight:700,color:"#9B98BE",marginBottom:6}}>{fmtM(pay.month)}</div>
+                                    <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+                                      {Number(pay.cardPrincipal)>0&&<span style={{fontSize:11,color:"#FF6B6B"}}>원금 {fmt(Number(pay.cardPrincipal))}</span>}
+                                      {Number(pay.cardInterest)>0&&<span style={{fontSize:11,color:"#F9C74F"}}>이자 {fmt(Number(pay.cardInterest))}</span>}
+                                      {Number(pay.cheonPrincipal)>0&&<span style={{fontSize:11,color:"#4ECDC4"}}>청약원금 {fmt(Number(pay.cheonPrincipal))}</span>}
+                                      {pay.note&&<span style={{fontSize:11,color:"#555370"}}>{pay.note}</span>}
+                                    </div>
+                                    {simRow&&<div style={{marginTop:6,display:"flex",gap:12,flexWrap:"wrap"}}>
+                                      <span style={{fontSize:10,color:"#4B4866"}}>카드론 잔액 {fmt(simRow.cardBal)}</span>
+                                      <span style={{fontSize:10,color:"#4B4866"}}>청약 잔액 {fmt(simRow.cheonBal)}</span>
+                                    </div>}
+                                  </div>
+                                  <div style={{display:"flex",gap:6,flexShrink:0,marginLeft:10}}>
+                                    <button onClick={()=>startEdit(pay)} style={{background:"#7C6AF715",border:"1px solid #7C6AF730",color:"#7C6AF7",padding:"5px 10px",borderRadius:7,cursor:"pointer",fontSize:11}}>수정</button>
+                                    <button onClick={()=>removePayment(pay.id)} style={{background:"#FF6B6B15",border:"1px solid #FF6B6B30",color:"#FF6B6B",padding:"5px 10px",borderRadius:7,cursor:"pointer",fontSize:11}}>삭제</button>
+                                  </div>
+                                </div>
+                              </div>
+                            : <div style={{padding:"14px 16px",background:"#0A0A1A"}}>
+                                <div style={{fontSize:12,fontWeight:700,color:"#9B98BE",marginBottom:12}}>✏️ {fmtM(pay.month)} 수정</div>
+                                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
+                                  <div><label style={{fontSize:10,color:"#FF6B6B88",display:"block",marginBottom:3}}>카드론 원금</label><input type="number" value={editForm.cardPrincipal} onChange={e=>setEditForm({...editForm,cardPrincipal:e.target.value})} style={mStyle("#FF6B6B30")}/></div>
+                                  <div><label style={{fontSize:10,color:"#F9C74F88",display:"block",marginBottom:3}}>카드론 이자</label><input type="number" value={editForm.cardInterest} onChange={e=>setEditForm({...editForm,cardInterest:e.target.value})} style={mStyle("#F9C74F30")}/></div>
+                                  <div><label style={{fontSize:10,color:"#4ECDC488",display:"block",marginBottom:3}}>청약 원금</label><input type="number" value={editForm.cheonPrincipal} onChange={e=>setEditForm({...editForm,cheonPrincipal:e.target.value})} style={mStyle("#4ECDC430")}/></div>
+                                  <div><label style={{fontSize:10,color:"#F9C74F88",display:"block",marginBottom:3}}>청약 이자</label><input type="number" value={editForm.cheonInterest} onChange={e=>setEditForm({...editForm,cheonInterest:e.target.value})} style={mStyle("#F9C74F30")}/></div>
+                                  <div style={{gridColumn:"1/-1"}}><label style={{fontSize:10,color:"#6B6882",display:"block",marginBottom:3}}>메모</label><input value={editForm.note} onChange={e=>setEditForm({...editForm,note:e.target.value})} style={mStyle("#ffffff13")}/></div>
+                                </div>
+                                <div style={{display:"flex",gap:8,marginTop:11}}>
+                                  <button onClick={saveEdit} style={{background:"linear-gradient(135deg,#7C6AF7,#5B4CF5)",border:"none",color:"#fff",padding:"7px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>저장</button>
+                                  <button onClick={cancelEdit} style={{background:"#ffffff0C",border:"1px solid #ffffff12",color:"#6B6882",padding:"7px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>취소</button>
+                                </div>
+                              </div>}
+                        </div>
+                      );
+                    })}
+                    <div style={{marginTop:10,padding:"10px 14px",background:"#141428",borderRadius:9,display:"flex",gap:18,flexWrap:"wrap"}}>
+                      <span style={{fontSize:11,color:"#6B6882"}}>5월↑ 원금: <strong style={{color:"#FF6B6B"}}>{fmt(sim.rows.reduce((a,r)=>a+r.cardP+r.cheonP,0))}</strong></span>
+                      <span style={{fontSize:11,color:"#6B6882"}}>5월↑ 이자: <strong style={{color:"#F9C74F"}}>{fmt(sim.rows.reduce((a,r)=>a+r.cardI+r.cheonI,0))}</strong></span>
+                    </div>
+                  </div>}
+            </div>
+          </div>}
+
+          {/* ══ INTEREST ══ */}
+          {activeTab==="interest" && <div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(135px,1fr))",gap:12,marginBottom:20}}>
+              {[{label:"카드론 총 이자",value:fmt(pastIntCard+futIntCard),color:"#FF6B6B"},{label:"청약 총 이자",value:fmt(pastIntCheon+futIntCheon),color:"#4ECDC4"},{label:"전체 이자 합계",value:fmt(totalInterest),color:"#F9C74F"},{label:"이자 기록 건수",value:`${interestTimeline.length}건`,color:"#7C6AF7"}].map(c=>(
+                <div key={c.label} style={{background:"#141428",borderRadius:12,padding:"15px",border:`1px solid ${c.color}1E`,position:"relative",overflow:"hidden"}}>
+                  <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:c.color}}/>
+                  <div style={{fontSize:10,color:"#6B6882",marginBottom:5}}>{c.label}</div>
+                  <div style={{fontSize:16,fontWeight:800,color:c.color}}>{c.value}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{fontSize:13,fontWeight:700,color:"#9B98BE",marginBottom:14}}>💸 이자 납부 타임라인</div>
+            <div style={{position:"relative",paddingLeft:24}}>
+              <div style={{position:"absolute",left:6,top:6,bottom:6,width:2,background:"linear-gradient(180deg,#FF6B6B,#F9C74F,#4ECDC4)",borderRadius:99}}/>
+              {interestTimeline.map(([label,data])=>{
+                const total=data.card+data.cheon;
+                return (
+                  <div key={label} style={{display:"flex",marginBottom:11,position:"relative"}}>
+                    <div style={{position:"absolute",left:-20,top:7,width:8,height:8,borderRadius:"50%",background:"#F9C74F",boxShadow:"0 0 7px #F9C74F88",border:"2px solid #0A0A12"}}/>
+                    <div style={{background:"#141428",borderRadius:11,padding:"11px 15px",flex:1,border:"1px solid #F9C74F1E"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                        <span style={{fontSize:12,fontWeight:700,color:"#C8C5DC"}}>{label}</span>
+                        <span style={{fontSize:13,fontWeight:800,color:"#F9C74F"}}>{fmt(total)}</span>
+                      </div>
+                      <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+                        {data.card>0&&<span style={{fontSize:11,color:"#FF6B6B"}}>카드론 {fmt(data.card)}</span>}
+                        {data.cheon>0&&<span style={{fontSize:11,color:"#4ECDC4"}}>청약 {fmt(data.cheon)}</span>}
+                        {data.locked&&<span style={{fontSize:10,color:"#555370"}}>🔒 확정</span>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{display:"flex",position:"relative"}}>
+                <div style={{position:"absolute",left:-20,top:7,width:8,height:8,borderRadius:"50%",background:"#7C6AF7",boxShadow:"0 0 8px #7C6AF788",border:"2px solid #0A0A12"}}/>
+                <div style={{background:"linear-gradient(135deg,#1A1A38,#141428)",borderRadius:11,padding:"13px 17px",flex:1,border:"1px solid #7C6AF730"}}>
+                  <div style={{fontSize:11,color:"#7C6AF7",fontWeight:700,marginBottom:5}}>총 납부 이자 합계</div>
+                  <div style={{fontSize:20,fontWeight:800,color:"#F9C74F"}}>{fmt(totalInterest)}</div>
+                  <div style={{display:"flex",gap:14,marginTop:5}}>
+                    <span style={{fontSize:11,color:"#FF6B6B"}}>카드론 {fmt(pastIntCard+futIntCard)}</span>
+                    <span style={{fontSize:11,color:"#4ECDC4"}}>청약 {fmt(pastIntCheon+futIntCheon)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>}
+
+          {/* ══ PLAN ══ */}
+          {activeTab==="timeline" && <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <span style={{fontSize:13,fontWeight:700,color:"#9B98BE"}}>상환 플랜 히스토리</span>
+              <button onClick={()=>setShowPlanForm(!showPlanForm)} style={{background:"#7C6AF720",border:"1px solid #7C6AF740",color:"#7C6AF7",padding:"6px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>+ 새 플랜 항목</button>
+            </div>
+            {showPlanForm&&<div style={{background:"#141428",borderRadius:12,padding:15,border:"1px solid #7C6AF730",marginBottom:14}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div><label style={{fontSize:10,color:"#6B6882",display:"block",marginBottom:4}}>시기 레이블</label><input value={newPlan.label} onChange={e=>setNewPlan({...newPlan,label:e.target.value})} placeholder="예: 8월" style={iStyle("#ffffff13")}/></div>
+                <div><label style={{fontSize:10,color:"#6B6882",display:"block",marginBottom:4}}>타입</label>
+                  <select value={newPlan.type} onChange={e=>setNewPlan({...newPlan,type:e.target.value})} style={iStyle("#ffffff13")}>
+                    {Object.entries(badgeMap).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                <div style={{gridColumn:"1/-1"}}><label style={{fontSize:10,color:"#6B6882",display:"block",marginBottom:4}}>내용</label><input value={newPlan.event} onChange={e=>setNewPlan({...newPlan,event:e.target.value})} placeholder="예: 카드론 완전 상환 완료" style={iStyle("#ffffff13")}/></div>
+              </div>
+              <div style={{display:"flex",gap:9,marginTop:12}}>
+                <button onClick={addPlanItem} style={{background:"linear-gradient(135deg,#7C6AF7,#5B4CF5)",border:"none",color:"#fff",padding:"8px 16px",borderRadius:9,cursor:"pointer",fontSize:12,fontWeight:700}}>추가</button>
+                <button onClick={()=>setShowPlanForm(false)} style={{background:"#ffffff0C",border:"1px solid #ffffff12",color:"#6B6882",padding:"8px 16px",borderRadius:9,cursor:"pointer",fontSize:12}}>취소</button>
+              </div>
+            </div>}
+
+            <div style={{position:"relative",paddingLeft:26}}>
+              <div style={{position:"absolute",left:7,top:8,bottom:8,width:2,background:"linear-gradient(180deg,#7C6AF7,#4ECDC4)",borderRadius:99}}/>
+              {planItems.map(item=>{
+                const ov=planOverrides[item.id]||{};
+                const isC=!!ov.completedAt, isS=!!ov.supersededAt, dim=isC||isS;
+                const color=dim?"#2E2E42":colorMap[item.type];
+                return (
+                  <div key={item.id} style={{display:"flex",marginBottom:11,position:"relative"}}>
+                    <div style={{position:"absolute",left:-22,top:7,width:9,height:9,borderRadius:"50%",background:dim?"#1E1E2E":color,boxShadow:dim?"none":`0 0 9px ${color}99`,border:`2px solid ${dim?"#141428":"#0A0A12"}`}}/>
+                    <div style={{flex:1,borderRadius:12,padding:"12px 15px",background:dim?"#0D0D1A":"#141428",border:`1px solid ${dim?"#1A1A28":color+"1E"}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4,flexWrap:"wrap"}}>
+                            {isC&&<span style={{fontSize:9,background:"#4ECDC418",color:"#4ECDC4",padding:"2px 7px",borderRadius:99,fontWeight:700}}>✓ 완료</span>}
+                            {isS&&<span style={{fontSize:9,background:"#55537018",color:"#555370",padding:"2px 7px",borderRadius:99,fontWeight:700}}>변경됨</span>}
+                            {!dim&&<span style={{fontSize:9,color,fontWeight:700}}>{badgeMap[item.type]}</span>}
+                            <span style={{fontSize:10,color:dim?"#3A3A52":"#6B6882"}}>{item.label}</span>
+                            <span style={{fontSize:9,color:"#2E2E42"}}>· {fmtM(item.addedAt)} 기준</span>
+                          </div>
+                          <div style={{fontSize:13,fontWeight:600,color:dim?"#4A4A62":"#E8E6F0",textDecoration:isS?"line-through":"none",textDecorationColor:"#3A3A52"}}>{item.event}</div>
+                          {isC&&<div style={{fontSize:10,color:"#4ECDC466",marginTop:3}}>{fmtM(ov.completedAt)} 완료</div>}
+                          {isS&&<div style={{fontSize:10,color:"#55537066",marginTop:3}}>{fmtM(ov.supersededAt)} 기준 변경</div>}
+                        </div>
+                        <div style={{display:"flex",gap:5,marginLeft:10,flexShrink:0,alignItems:"center"}}>
+                          {!dim&&<>
+                            <button onClick={()=>markComplete(item.id)} style={{background:"#4ECDC413",border:"1px solid #4ECDC428",color:"#4ECDC4",padding:"4px 9px",borderRadius:6,cursor:"pointer",fontSize:10,fontWeight:700}}>완료</button>
+                            <button onClick={()=>markSupersede(item.id)} style={{background:"#55537013",border:"1px solid #55537028",color:"#555370",padding:"4px 9px",borderRadius:6,cursor:"pointer",fontSize:10}}>변경</button>
+                          </>}
+                          {dim&&<button onClick={()=>undoPlan(item.id)} title="되돌리기" style={{background:"#2A2A3A",border:"1px solid #3A3A52",color:"#6B6882",width:28,height:28,borderRadius:"50%",cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>↩</button>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{background:"#141428",borderRadius:12,padding:"15px 18px",marginTop:8,border:"1px solid #7C6AF71E"}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#7C6AF7",marginBottom:11}}>💡 핵심 판단 기준</div>
+              {[
+                ["8월 대환 기준","금리 6.5% 이하 시 대환 / 잔액 800만 이하면 직접 상환 유리"],
+                ["완납 목표",`월 ${fmt(monthlyNeeded)} 이상 유지 시 ${fmtM(targetMonth)} 달성`],
+                ["연금저축","300만원 → 총급여 5,500 이하 49.5만 / 초과 39.6만원"],
+                ["신용등급","선결제 루틴 유지 / 7월까지 5→4등급"],
+                ["청약 700","카드론 완전 상환 후 / 월이자 23,602원 고정"],
+              ].map(([k,v])=>(
+                <div key={k} style={{display:"flex",gap:12,marginBottom:9,alignItems:"flex-start"}}>
+                  <span style={{fontSize:10,color:"#6B6882",minWidth:80,marginTop:2,lineHeight:1.6}}>{k}</span>
+                  <span style={{fontSize:12,color:"#C8C5DC",lineHeight:1.7}}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>}
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
